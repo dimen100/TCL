@@ -1,0 +1,168 @@
+import subprocess
+import time
+import os
+
+# Path to the xsct.exe and hw_server.exe files
+xsct_path = r"E:\Xilinx\Vitis\2020.1\bin\xsct.bat"
+hw_server_path = r"E:\Xilinx\Vitis\2020.1\bin\hw_server.bat"
+
+def terminate_xsct_processes():
+    """Terminate any existing XSCT processes on Windows."""
+    try:
+        # List all processes and filter for XSCT
+        result = subprocess.run(['tasklist'], stdout=subprocess.PIPE, text=True)
+        for line in result.stdout.splitlines():
+            if "xsct.exe" in line.lower():
+                # Extract the process ID (PID)
+                pid = int(line.split()[1])  # Assuming the second column is the PID
+                print(f"Terminating existing XSCT process with PID: {pid}")
+                subprocess.run(['taskkill', '/F', '/PID', str(pid)], stdout=subprocess.PIPE, text=True)
+                time.sleep(1)  # Give it a moment to terminate
+    except Exception as e:
+        print(f"Error while terminating XSCT processes: {e}")
+
+def terminate_hw_server():
+    """Terminate any existing hw_server processes on Windows."""
+    try:
+        # List all processes and filter for hw_server
+        result = subprocess.run(['tasklist'], stdout=subprocess.PIPE, text=True)
+        for line in result.stdout.splitlines():
+            if "hw_server.exe" in line.lower():
+                # Extract the process ID (PID)
+                pid = int(line.split()[1])  # Assuming the second column is the PID
+                print(f"Terminating existing hw_server process with PID: {pid}")
+                subprocess.run(['taskkill', '/F', '/PID', str(pid)], stdout=subprocess.PIPE, text=True)
+                time.sleep(1)  # Give it a moment to terminate
+    except Exception as e:
+        print(f"Error while terminating hw_server processes: {e}")
+
+def start_hw_server():
+    """Start the hw_server process."""
+    try:
+        # Check if hw_server is already running
+        result = subprocess.run(['tasklist'], stdout=subprocess.PIPE, text=True)
+        if "hw_server.exe" not in result.stdout.lower():
+            print("Starting hw_server...")
+            subprocess.Popen([hw_server_path],
+                             stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE,
+                             text=True)
+            time.sleep(5)  # Give it time to initialize
+        else:
+            print("hw_server is already running.")
+    except Exception as e:
+        print(f"Error starting hw_server: {e}")
+
+def run_xsct_commands(external_tcl_script=None):
+    try:
+        # Terminate any existing XSCT processes
+        terminate_xsct_processes()
+
+        # Create a temporary TCL script file with the commands
+        temp_script_content = f"""
+puts "Connecting to hardware..."
+if {{[catch {{connect}} errMsg]}} {{
+    puts "Error during connect: $errMsg"
+    exit 1
+}} else {{
+    puts "Successfully connected."
+}}
+
+# Additional setup commands can be added here
+
+"""
+
+        # If an external TCL script is provided, add a command to source it
+        if external_tcl_script:
+            temp_script_content += f"""
+puts "Sourcing external script: {external_tcl_script}"
+source "{external_tcl_script}"
+
+# Exiting XSCT after external script
+exit
+"""
+        else:
+            # If no external script, include exit command
+            temp_script_content += "\nexit\n"
+
+        # Write the temporary script to a file
+        temp_script_path = "temp_script.tcl"
+        with open(temp_script_path, 'w') as script_file:
+            script_file.write(temp_script_content)
+
+        # Start the XSCT process with the temporary script
+        xsct_commands = [xsct_path, temp_script_path]
+
+        # Start the XSCT process
+        process = subprocess.Popen(xsct_commands,
+                                   stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE,
+                                   text=True)
+        # Read output and errors
+        stdout, stderr = process.communicate()
+
+        print("XSCT Output:")
+        print(stdout)
+
+        if stderr:
+            print("XSCT Errors:")
+            print(stderr)
+
+        # Remove the temporary script file
+        os.remove(temp_script_path)
+
+    except Exception as e:
+        print(f"Error occurred: {e}")
+
+def perform_spectrum_search():
+    # Your spectrum search function
+    print("Performing spectrum search...")
+    # Add your function implementation here
+
+if __name__ == "__main__":
+    # Timing parameters
+    loop_interval = 10  # Time between iterations in seconds
+    total_iterations = 2  # Total number of iterations (set None for infinite loop)
+    start_time = time.time()
+    iteration = 0
+
+    # Start hw_server once before the loop
+    start_hw_server()
+
+    try:
+        while True:
+            iteration += 1
+            print(f"\nStarting iteration {iteration}")
+
+            # List of external TCL scripts in desired order
+            external_scripts = [
+                "a.tcl",
+                "b.tcl",
+                "c.tcl"
+            ]  # Update this list with your scripts
+
+            '''external_scripts = [
+                "a.tcl",
+            ]'''
+
+            for external_script_path in external_scripts:
+                print(f"\nRunning external script: {external_script_path}")
+                run_xsct_commands(external_tcl_script=external_script_path)
+                # Run your Python function after each script execution
+                perform_spectrum_search()
+
+            # Check if the total number of iterations has been reached
+            if total_iterations is not None and iteration >= total_iterations:
+                print("Reached total number of iterations.")
+                break
+
+            # Wait for the specified loop interval before the next iteration
+            print(f"Waiting for {loop_interval} seconds before next iteration...")
+            time.sleep(loop_interval)
+
+    except KeyboardInterrupt:
+        print("Loop interrupted by user.")
+
+    finally:
+        # After all iterations are done, terminate hw_server if needed
+        terminate_hw_server()
