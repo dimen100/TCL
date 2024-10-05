@@ -1,0 +1,63 @@
+# a.tcl
+
+puts "===TCL script One===..."
+
+puts "Running external TCL script..."
+
+# Retrieve the list of available targets
+set targetsList [targets]
+
+# Check if there are any targets available
+if {[llength $targetsList] == 0} {
+    puts "No targets found."
+    exit 1
+} else {
+    puts "Available targets:"
+    puts $targetsList
+}
+
+# Extract the target ID for the first ARM core
+# Split the targets list into lines
+set targetsLines [split $targetsList "\n"]
+
+# Initialize variables
+set targetID ""
+set targetFound 0
+
+# Iterate over the lines to find the first ARM core target ID
+foreach line $targetsLines {
+    # Trim leading and trailing whitespace
+    set line [string trim $line]
+    # Skip empty lines
+    if {$line eq ""} {
+        continue
+    }
+    # Use a regular expression to match target lines with 'ARM' and extract the target ID
+    if {[regexp {^(\d+)\s+.*ARM.*} $line match tID]} {
+        set targetID $tID
+        set targetFound 1
+        break
+    }
+}
+
+# Check if we found an ARM target ID
+if {$targetFound == 0 || $targetID eq ""} {
+    puts "Could not find a valid ARM target ID."
+    exit 1
+} else {
+    puts "Selecting ARM target with ID: $targetID"
+    # Select the target
+    targets $targetID
+    # Confirm the selection by listing targets again
+    puts "Current targets after selection:"
+    set newTargetsList [targets]
+    puts $newTargetsList
+}
+
+# Now proceed with your commands
+puts "Reading memory at address 0x00000000..."
+set mem_value [mrd 0x00000000]
+puts "Memory Value at 0x00000000: $mem_value"
+
+# Exiting XSCT (if this is the last script)
+# exit
