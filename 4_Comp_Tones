@@ -1,0 +1,164 @@
+import os
+import pandas as pd
+import re
+import numpy as np
+
+# Define the main path
+directory = r'C:\Users\ABC\Desktop'
+
+# Set the variable to control how many tones to compare (2, 3, 4, or 5)
+variable = 5  # Example: Compare Tone1, Tone2, and Tone3
+
+# List to store rows of data from all processed files
+consolidated_data = []
+
+
+# Function to convert dBm to linear (mW)
+def dbm_to_linear(dbm):
+    return 10 ** (dbm / 10.0) if isinstance(dbm, (int, float)) else 'No Match Found'
+
+
+# Function to extract peak power for target frequencies from the file name
+def extract_peak_power(df, target_frequencies, tolerance=1.0):
+    picked_data = []
+    picked_data_linear = []
+    for freq in target_frequencies:
+        # Find the closest frequency within the tolerance range
+        within_tolerance = df[(df['Peak Frequency (MHz)'] - freq).abs() < tolerance]
+        if not within_tolerance.empty:
+            closest_index = (within_tolerance['Peak Frequency (MHz)'] - freq).abs().idxmin()
+            peak_amplitude_dbm = df.loc[closest_index, 'Peak Amplitude (dBm)']
+            # Convert to linear (mW)
+            peak_amplitude_linear = dbm_to_linear(peak_amplitude_dbm)
+            picked_data.append(peak_amplitude_dbm)  # Add dBm value
+            picked_data_linear.append(peak_amplitude_linear)  # Add linear (mW) value
+        else:
+            picked_data.append('No Match Found')
+            picked_data_linear.append('No Match Found')
+    return picked_data, picked_data_linear
+
+
+# Function to parse frequencies and values from the file name
+def parse_frequencies_and_values_from_filename(filename):
+    # Replace 'p' with '.' to handle decimal point
+    filename = filename.replace('p', '.')
+
+    # Extract numbers from the filename
+    freq_matches = re.findall(r'\d+\.?\d*', filename)
+
+    # The first value extracted after 'Data' is the value before frequencies
+    first_value = freq_matches[0] if freq_matches else None
+
+    # Extract target frequencies (only those >= 100 MHz)
+    target_frequencies = [float(f) for f in freq_matches if float(f) >= 100]
+
+    return first_value, target_frequencies
+
+
+# Function to find and return the largest spur while ignoring main tones with tolerance
+def find_largest_spur(df, main_tones, tolerance=1.0):
+    # Exclude rows where the 'Peak Frequency (MHz)' is within the tolerance range of any main tone
+    spurs = df[~df['Peak Frequency (MHz)'].apply(lambda x: any(abs(x - tone) < tolerance for tone in main_tones))]
+
+    # If spurs exist after filtering, find the largest one
+    if not spurs.empty:
+        largest_spur = spurs.loc[spurs['Peak Amplitude (dBm)'].idxmax()]
+        spur_freq = largest_spur['Peak Frequency (MHz)']
+        spur_amp_dbm = largest_spur['Peak Amplitude (dBm)']
+        # Convert to linear (mW)
+        spur_amp_linear = dbm_to_linear(spur_amp_dbm)
+    else:
+        spur_freq = 'No Spur'
+        spur_amp_dbm = 'No Spur'
+        spur_amp_linear = 'No Spur'
+
+    return spur_freq, spur_amp_dbm, spur_amp_linear
+
+
+# Function to append data to the consolidated list
+def append_to_consolidated_data(iteration, target_frequencies, peak_data, peak_data_linear, spur_freq, spur_amp_dbm,
+                                spur_amp_linear, temp, time):
+    # Create a structured row including both linear and non-linear power values
+    data_row = [iteration] + target_frequencies + peak_data + peak_data_linear + [spur_freq, spur_amp_dbm,
+                                                                                  spur_amp_linear, temp, time]
+
+    # Compare the power of the tones according to the variable
+    tone_subset_dBm = peak_data[:variable]  # Take the first 'variable' tones in dBm
+    # Filter out 'No Match Found' values to avoid comparison issues
+    tone_subset_dBm = [x for x in tone_subset_dBm if isinstance(x, (int, float))]
+
+    # Compute max and min power among the subset of tones
+    if tone_subset_dBm:
+        max_tone_power_dbm = max(tone_subset_dBm)
+        min_tone_power_dbm = min(tone_subset_dBm)
+        # Convert to linear
+        max_tone_power_mw = dbm_to_linear(max_tone_power_dbm)
+        min_tone_power_mw = dbm_to_linear(min_tone_power_dbm)
+    else:
+        max_tone_power_dbm = 'No Match Found'
+        min_tone_power_dbm = 'No Match Found'
+        max_tone_power_mw = 'No Match Found'
+        min_tone_power_mw = 'No Match Found'
+
+    # Add max and min tone power (both dBm and linear) to the data row
+    data_row += [max_tone_power_dbm, min_tone_power_dbm, max_tone_power_mw, min_tone_power_mw]
+
+    consolidated_data.append(data_row)
+
+
+# Variable to store the directory for the output file
+output_directory = None
+iteration = 1  # To track the iteration count
+
+# Navigate through the main path and its subfolders
+for root, dirs, files in os.walk(directory):
+    if 'TCL' in root:
+        for file in files:
+            if file.endswith('.csv'):
+                file_path = os.path.join(root, file)
+
+                # Load the CSV data into a DataFrame
+                df = pd.read_csv(file_path)
+
+                # Sort the data by 'Peak Frequency (MHz)'
+                df_sorted = df.sort_values('Peak Frequency (MHz)')
+
+                # Parse the first value and target frequencies from the file name
+                first_value, target_frequencies = parse_frequencies_and_values_from_filename(file)
+
+                # Extract peak data for the parsed frequencies (both dBm and linear)
+                peak_data, peak_data_linear = extract_peak_power(df_sorted, target_frequencies)
+
+                # Find the largest spur (both dBm and linear)
+                spur_freq, spur_amp_dbm, spur_amp_linear = find_largest_spur(df_sorted, target_frequencies)
+
+                # Extract Temp and Time from the CSV file (taking the first row as an example)
+                temp = df_sorted['Temp (C)'].iloc[0]
+                time = df_sorted['Time'].iloc[0]
+
+                # Append the data to the consolidated list with iteration count
+                append_to_consolidated_data(iteration, target_frequencies, peak_data, peak_data_linear, spur_freq,
+                                            spur_amp_dbm, spur_amp_linear, temp, time)
+                iteration += 1  # Increment iteration for the next file
+
+                # Set the output directory based on the first CSV file location
+                if output_directory is None:
+                    output_directory = root
+
+# Once all files are processed, save the consolidated data into a single CSV in the same directory
+if output_directory:
+    output_csv_path = os.path.join(output_directory, 'Consolidated_Output.csv')
+
+    # Define the header for the final CSV file (including both dBm and linear values, and Max/Min tone power)
+    header = ['Iteration', 'Tone1', 'Tone2', 'Tone3', 'Tone4', 'Tone5',
+              'Peak_Tone1 (dBm)', 'Peak_Tone2 (dBm)', 'Peak_Tone3 (dBm)', 'Peak_Tone4 (dBm)', 'Peak_Tone5 (dBm)',
+              'Peak_Tone1 (mW)', 'Peak_Tone2 (mW)', 'Peak_Tone3 (mW)', 'Peak_Tone4 (mW)', 'Peak_Tone5 (mW)',
+              'Spur_Freq', 'Spur_Amp (dBm)', 'Spur_Amp (mW)', 'Temp (C)', 'Time',
+              'Max_Tone_Power (dBm)', 'Min_Tone_Power (dBm)', 'Max_Tone_Power (mW)', 'Min_Tone_Power (mW)']
+
+    # Convert the consolidated data to a DataFrame and save it to a CSV with headers
+    consolidated_df = pd.DataFrame(consolidated_data)
+    consolidated_df.to_csv(output_csv_path, index=False, header=header)
+    print(f"Consolidated data saved to {output_csv_path}")
+else:
+    print("No CSV files found to process.")
