@@ -7,7 +7,7 @@ import numpy as np
 directory = r'C:\Users\ABC\Desktop'
 
 # Set the variable to control how many tones to compare (2, 3, 4, or 5)
-variable = 5  # Example: Compare Tone1, Tone2, and Tone3
+variable = 3  # Example: Compare Tone1, Tone2, and Tone3
 
 # List to store rows of data from all processed files
 consolidated_data = []
@@ -55,32 +55,53 @@ def parse_frequencies_and_values_from_filename(filename):
     return first_value, target_frequencies
 
 
-# Function to find and return the largest spur while ignoring main tones with tolerance
-def find_largest_spur(df, main_tones, tolerance=1.0):
-    # Exclude rows where the 'Peak Frequency (MHz)' is within the tolerance range of any main tone
+# Updated function to find and return the largest spur while ignoring main tones with tolerance
+# Returns spur frequency, spur amplitude in dBm, linear (mW), and dBc
+def find_largest_spur(df, main_tones, variable, tolerance=1.0):
+    # Step 1: Get the minimum tone power among the first "variable" main tones
+    main_tone_subset = main_tones[:variable]  # Consider only the first "variable" tones
+
+    # Filter for main tones
+    main_tone_df = df[
+        df['Peak Frequency (MHz)'].apply(lambda x: any(abs(x - tone) < tolerance for tone in main_tone_subset))]
+
+    # If we find main tones, calculate the minimum power among them
+    if not main_tone_df.empty:
+        min_tone_power_dbm = main_tone_df['Peak Amplitude (dBm)'].min()
+    else:
+        min_tone_power_dbm = None
+
+    # Step 2: Find the highest spur (ignoring the main tones)
+    # Filter out the main tones from the DataFrame to find spurs
     spurs = df[~df['Peak Frequency (MHz)'].apply(lambda x: any(abs(x - tone) < tolerance for tone in main_tones))]
 
-    # If spurs exist after filtering, find the largest one
-    if not spurs.empty:
+    # If spurs exist, find the largest one (based on dBm)
+    if not spurs.empty and min_tone_power_dbm is not None:
         largest_spur = spurs.loc[spurs['Peak Amplitude (dBm)'].idxmax()]
         spur_freq = largest_spur['Peak Frequency (MHz)']
         spur_amp_dbm = largest_spur['Peak Amplitude (dBm)']
-        # Convert to linear (mW)
+
+        # Step 3: Calculate spur amplitude in dBc (relative to the minimum tone power)
+        spur_amp_dbc = spur_amp_dbm - min_tone_power_dbm
+
+        # Step 4: Convert spur amplitude in dBm to linear (mW)
         spur_amp_linear = dbm_to_linear(spur_amp_dbm)
     else:
         spur_freq = 'No Spur'
         spur_amp_dbm = 'No Spur'
+        spur_amp_dbc = 'No Spur'
         spur_amp_linear = 'No Spur'
 
-    return spur_freq, spur_amp_dbm, spur_amp_linear
+    return spur_freq, spur_amp_dbm, spur_amp_linear, spur_amp_dbc
 
 
 # Function to append data to the consolidated list
 def append_to_consolidated_data(iteration, target_frequencies, peak_data, peak_data_linear, spur_freq, spur_amp_dbm,
-                                spur_amp_linear, temp, time):
+                                spur_amp_linear, spur_amp_dbc, temp, time):
     # Create a structured row including both linear and non-linear power values
     data_row = [iteration] + target_frequencies + peak_data + peak_data_linear + [spur_freq, spur_amp_dbm,
-                                                                                  spur_amp_linear, temp, time]
+                                                                                  spur_amp_linear, spur_amp_dbc, temp,
+                                                                                  time]
 
     # Compare the power of the tones according to the variable
     tone_subset_dBm = peak_data[:variable]  # Take the first 'variable' tones in dBm
@@ -129,8 +150,9 @@ for root, dirs, files in os.walk(directory):
                 # Extract peak data for the parsed frequencies (both dBm and linear)
                 peak_data, peak_data_linear = extract_peak_power(df_sorted, target_frequencies)
 
-                # Find the largest spur (both dBm and linear)
-                spur_freq, spur_amp_dbm, spur_amp_linear = find_largest_spur(df_sorted, target_frequencies)
+                # Find the largest spur (in dBm, linear, and dBc)
+                spur_freq, spur_amp_dbm, spur_amp_linear, spur_amp_dbc = find_largest_spur(df_sorted,
+                                                                                           target_frequencies, variable)
 
                 # Extract Temp and Time from the CSV file (taking the first row as an example)
                 temp = df_sorted['Temp (C)'].iloc[0]
@@ -138,7 +160,7 @@ for root, dirs, files in os.walk(directory):
 
                 # Append the data to the consolidated list with iteration count
                 append_to_consolidated_data(iteration, target_frequencies, peak_data, peak_data_linear, spur_freq,
-                                            spur_amp_dbm, spur_amp_linear, temp, time)
+                                            spur_amp_dbm, spur_amp_linear, spur_amp_dbc, temp, time)
                 iteration += 1  # Increment iteration for the next file
 
                 # Set the output directory based on the first CSV file location
@@ -153,7 +175,7 @@ if output_directory:
     header = ['Iteration', 'Tone1', 'Tone2', 'Tone3', 'Tone4', 'Tone5',
               'Peak_Tone1 (dBm)', 'Peak_Tone2 (dBm)', 'Peak_Tone3 (dBm)', 'Peak_Tone4 (dBm)', 'Peak_Tone5 (dBm)',
               'Peak_Tone1 (mW)', 'Peak_Tone2 (mW)', 'Peak_Tone3 (mW)', 'Peak_Tone4 (mW)', 'Peak_Tone5 (mW)',
-              'Spur_Freq', 'Spur_Amp (dBm)', 'Spur_Amp (mW)', 'Temp (C)', 'Time',
+              'Spur_Freq', 'Spur_Amp (dBm)', 'Spur_Amp (mW)', 'Spur_Amp (dBc)', 'Temp (C)', 'Time',
               'Max_Tone_Power (dBm)', 'Min_Tone_Power (dBm)', 'Max_Tone_Power (mW)', 'Min_Tone_Power (mW)']
 
     # Convert the consolidated data to a DataFrame and save it to a CSV with headers
